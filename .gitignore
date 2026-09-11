@@ -1,0 +1,11 @@
+.env
+venv
+*.log
+__pycache__/
+*.pyc
+*.pyo
+*.swp
+*.bak
+*.tmp
+*.cache
+*.cache/
