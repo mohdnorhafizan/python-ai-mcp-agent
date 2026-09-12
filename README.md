@@ -1,29 +1,34 @@
 # Python AI MCP Agent
 
-An interactive Python agent that routes device-support questions into predefined skills, calls the permitted Model Context Protocol (MCP) tools, and uses the OpenAI Responses API to produce an answer.
+A FastAPI device-support chat application. A supervisor routes actionable requests into predefined skills, retains browser-session context, calls the permitted Model Context Protocol (MCP) tools, and uses the OpenAI Responses API to generate answers.
 
 ## Architecture
 
 ```text
-Terminal question
+Browser chat message
        |
        v
-AI backend
-  - select predefined skill
+FastAPI application
+       - load browser session
+                      |
+                      v
+Supervisor
+       - select a skill only for a clear support intent
+       - retain pending workflow and device serial context
   - expose only allowed MCP tools
-  - call OpenAI Responses API
        |
        v
 MCP client (stdio)
        |
        v
 MCP server
+       - resolve_device_reference
   - get_device
   - get_device_metrics
   - check_provisioning_status
 ```
 
-The backend owns the skill registry. A skill supplies instructions and an allowlist of tools, so the model operates inside the selected workflow boundary.
+The backend owns the skill registry. A skill supplies instructions and a tool allowlist, so the model operates inside the selected workflow boundary.
 
 ## Predefined Skills
 
@@ -31,7 +36,25 @@ The backend owns the skill registry. A skill supplies instructions and an allowl
 | --- | --- | --- |
 | `historical_reply` | Requests containing `history`, `historical`, `metric`, `metrics`, or `performance` | `get_device`, `get_device_metrics` |
 | `device_provisioning` | Requests containing `provision`, `provisioning`, `activate`, or `activation` | `get_device`, `check_provisioning_status` |
-| `diagnostic` | All other requests | `get_device`, `get_device_metrics` |
+| `diagnostic` | Requests containing `slow`, `offline`, `error`, `issue`, `problem`, `diagnose`, or `diagnostic` | `get_device`, `get_device_metrics` |
+
+Greetings and unclear messages, such as `Hi`, do not select a skill or expose MCP tools.
+
+## Conversation Memory
+
+Each browser receives an independent session cookie. The server keeps the session's OpenAI response ID, last resolved device serial, and any unfinished workflow.
+
+For example, the supervisor remembers that the second message completes the first request:
+
+```text
+You: Check the performance.
+AI: Please provide the device serial number.
+
+You: halalfood
+AI: [retrieves and summarizes halalfood performance metrics]
+```
+
+When a user supplies a serial-only reply, the supervisor reuses the pending skill, resolves the serial through the device inventory, and completes the requested operation. A new explicit request replaces the pending workflow.
 
 ## Prerequisites
 
@@ -59,7 +82,7 @@ Create a `.env` file in the project root:
 OPENAI_API_KEY=your_openai_api_key
 ```
 
-## Run
+## Terminal Chat
 
 With the virtual environment active:
 
@@ -67,10 +90,10 @@ With the virtual environment active:
 python .\ai_backend.py
 ```
 
-The program starts `mcp_server.py` automatically using the same Python interpreter, then prompts for a question:
+The program starts `mcp_server.py` automatically using the same Python interpreter and starts an interactive terminal chat:
 
 ```text
-Ask a device question: Why is device ABC123 performing slowly?
+You: Why is device ABC123 performing slowly?
 ```
 
 ## Browser Chat
@@ -81,7 +104,7 @@ Start the FastAPI application:
 uvicorn web_app:app --reload
 ```
 
-Open http://127.0.0.1:8000 in a browser. Each browser receives a separate session cookie. The session retains its OpenAI response ID and current device serial number, allowing follow-up messages such as `Is it provisioned?`.
+Open http://127.0.0.1:8000 in a browser. Each browser receives a separate session cookie, so one user's conversation state cannot conflict with another user's session.
 
 ## Sample Questions
 
@@ -97,28 +120,38 @@ Is device ABC123 provisioned?
 Why is device ABC123 performing slowly?
 ```
 
+```text
+Check the performance.
+```
+
+```text
+halalfood
+```
+
 ## MCP Tools
 
 The MCP server currently returns mock device data:
 
 | Tool | Inputs | Result |
 | --- | --- | --- |
+| `resolve_device_reference` | `user_request` | Finds a registered serial number mentioned in the request |
 | `get_device` | `serial_number` | Device model and current status |
 | `get_device_metrics` | `serial_number`, `days` | Historical latency metrics |
 | `check_provisioning_status` | `serial_number` | Provisioning status |
 
 ## Logging
 
-The backend logs the full workflow to the terminal: MCP server startup, discovered tools, selected skill, permitted tools, model response rounds, tool arguments and results, and request durations.
+The application logs the full workflow to the terminal: MCP server startup, device resolution, selected skill, permitted tools, model response rounds, tool arguments and results, and request durations.
 
 The default log level is `INFO`. Enable additional library diagnostics for the current PowerShell session with:
 
 ```powershell
 $env:LOG_LEVEL="DEBUG"
-python .\ai_backend.py
+uvicorn web_app:app --reload
 ```
 
 ## Notes
 
 - This project uses MCP 2.x and imports `MCPServer` from `mcp.server`.
 - `mcp_server.py` communicates over stdio; do not add ordinary `print()` calls to that server because stdout is reserved for the MCP protocol.
+- Chat sessions are held in the FastAPI process memory. They reset when the server restarts; use Redis or a database for persistent production sessions.
