@@ -50,7 +50,7 @@ python -m venv venv
 Install the dependencies:
 
 ```powershell
-pip install mcp openai python-dotenv
+pip install -r requirements.txt
 ```
 
 Create a `.env` file in the project root:
@@ -72,6 +72,16 @@ The program starts `mcp_server.py` automatically using the same Python interpret
 ```text
 Ask a device question: Why is device ABC123 performing slowly?
 ```
+
+## Browser Chat
+
+Start the FastAPI application:
+
+```powershell
+uvicorn web_app:app --reload
+```
+
+Open http://127.0.0.1:8000 in a browser. Each browser receives a separate session cookie. The session retains its OpenAI response ID and current device serial number, allowing follow-up messages such as `Is it provisioned?`.
 
 ## Sample Questions
 

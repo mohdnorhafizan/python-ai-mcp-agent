@@ -35,47 +35,118 @@ class Skill:
     allowed_tools: frozenset[str]
 
 
+@dataclass
+class Supervisor:
+    """Coordinates skill selection and session context for a conversation."""
+
+    current_device_serial: str | None = None
+    pending_skill: Skill | None = None
+
+    def select_skill(self, user_request: str) -> Skill | None:
+        normalized_request = user_request.lower()
+
+        if re.search(r"\b(provision|provisioning|activate|activation)\b", normalized_request):
+            self.pending_skill = SKILLS["device_provisioning"]
+        elif re.search(r"\b(history|historical|metric|metrics|performance)\b", normalized_request):
+            self.pending_skill = SKILLS["historical_reply"]
+        elif re.search(r"\b(slow|offline|error|issue|problem|diagnose|diagnostic)\b", normalized_request):
+            self.pending_skill = SKILLS["diagnostic"]
+
+        return self.pending_skill
+
+    def build_instructions(self, skill: Skill | None) -> str:
+        device_context = (
+            f"The current device serial number is {self.current_device_serial}. "
+            "Use it for follow-up requests unless the user names another device."
+            if self.current_device_serial
+            else "No device has been confirmed in this session yet."
+        )
+        if skill is None:
+            return (
+                "You are a device-support chat assistant. Reply conversationally, "
+                "but do not call tools until the user clearly asks about device "
+                "history, provisioning, or a device problem. "
+                f"Supervisor session context: {device_context}"
+            )
+        pending_context = (
+            "This workflow is awaiting a device serial number from an earlier "
+            "request. Treat a short follow-up message as the device reference."
+            if self.current_device_serial is None
+            else "The required device reference has been resolved."
+        )
+        return (
+            f"{skill.instructions}\n\nSupervisor session context: "
+            f"{device_context} {pending_context}"
+        )
+
+    def record_tool_result(self, tool_name: str, result_content: object) -> None:
+        if tool_name in {"get_device_metrics", "check_provisioning_status"}:
+            self.pending_skill = None
+            logger.info("Supervisor completed the active workflow")
+            return
+
+        if tool_name != "resolve_device_reference":
+            return
+
+        result_text = str(result_content)
+        serial_match = re.search(r"['\"]serial_number['\"]:\s*['\"]([^'\"]+)", result_text)
+        if serial_match:
+            self.current_device_serial = serial_match.group(1)
+            logger.info(
+                "Supervisor saved current device serial: %s",
+                self.current_device_serial,
+            )
+
+
 SKILLS = {
     "historical_reply": Skill(
         name="historical_reply",
         instructions=(
-            "You are the Historical Reply workflow. Identify the requested "
-            "device, retrieve only the requested historical metrics, and give "
-            "a concise factual summary. Do not perform provisioning actions."
+            "You are the Historical Reply workflow. The supervisor has already "
+            "resolved any device reference and supplied it in the session context. "
+            "If no device serial is in session context, ask only for the serial number. "
+            "Otherwise, call get_device_metrics with that serial number. When the request omits "
+            "a duration, use 3 days. Tool calls are internal: do not tell the user "
+            "to wait or that you will check later. Complete the tool workflow before "
+            "giving a concise factual summary. Do not perform provisioning actions."
         ),
-        allowed_tools=frozenset({"get_device", "get_device_metrics"}),
+        allowed_tools=frozenset(
+            {"get_device", "get_device_metrics"}
+        ),
     ),
     "device_provisioning": Skill(
         name="device_provisioning",
         instructions=(
-            "You are the Device Provisioning workflow. Verify device identity "
-            "and its provisioning status, then report the outcome. Do not "
+            "You are the Device Provisioning workflow. The supervisor has already "
+            "resolved any device reference and supplied it in the session context. "
+            "If no device serial is in session context, ask only for the serial number. "
+            "Otherwise, call check_provisioning_status with the resolved serial number "
+            "and report the outcome. Tool calls are internal: do not tell the user "
+            "to wait or that you will check later. Do not "
             "provide historical metric analysis."
         ),
-        allowed_tools=frozenset({"get_device", "check_provisioning_status"}),
+        allowed_tools=frozenset(
+            {"get_device", "check_provisioning_status"}
+        ),
     ),
     "diagnostic": Skill(
         name="diagnostic",
         instructions=(
             "You are the Diagnostic workflow. Inspect the device and relevant "
-            "historical metrics, identify observable issues, and report the "
-            "evidence. Do not claim to make device changes."
+            "historical metrics. The supervisor has already resolved any device "
+            "reference and supplied it in the session context. If no device serial is "
+            "in session context, ask only for the serial number. Otherwise, call get_device and "
+            "get_device_metrics with its serial number. When the request omits a "
+            "duration, use 3 days. Tool calls are internal: do not tell the user to "
+            "wait or that you will check later. Complete the tool workflow, then "
+            "identify observable issues and report the evidence. Do not claim to "
+            "make device changes."
         ),
-        allowed_tools=frozenset({"get_device", "get_device_metrics"}),
+        allowed_tools=frozenset(
+            {"get_device", "get_device_metrics"}
+        ),
     ),
 }
-
-
-def select_skill(user_request: str) -> Skill:
-    """Route a request into one predefined workflow before exposing MCP tools."""
-
-    normalized_request = user_request.lower()
-
-    if re.search(r"\b(provision|provisioning|activate|activation)\b", normalized_request):
-        return SKILLS["device_provisioning"]
-    if re.search(r"\b(history|historical|metric|metrics|performance)\b", normalized_request):
-        return SKILLS["historical_reply"]
-    return SKILLS["diagnostic"]
 
 
 def log_response(response, stage: str) -> None:
@@ -119,6 +190,10 @@ async def main():
                 [tool.name for tool in tools_result.tools],
             )
 
+            logger.info(f"Tool Names: {[tool.name for tool in tools_result.tools]}")
+            logger.info(f"Tool Descriptions: {[tool.description for tool in tools_result.tools]}")
+            logger.info(f"Tool Parameters: {[tool.input_schema for tool in tools_result.tools]}")
+
             tools = [
                 {
                     "type": "function",
@@ -129,108 +204,127 @@ async def main():
                 for tool in tools_result.tools
             ]
 
-            user_question = input("\nAsk a device question: ").strip()
-            if not user_question:
-                logger.warning("No user request provided; stopping the program")
-                print("Please enter a device question.")
-                return
-
-            logger.info("Received user request: %s", user_question)
-            skill = select_skill(user_question)
-            logger.info(
-                "Selected skill: name=%s, allowed_tools=%s",
-                skill.name,
-                sorted(skill.allowed_tools),
-            )
-
-            tools = [
-                tool
-                for tool in tools
-                if tool["name"] in skill.allowed_tools
-            ]
-            logger.info(
-                "Exposing %d tools to the model: %s",
-                len(tools),
-                [tool["name"] for tool in tools],
-            )
-
-            model_call_started = time.perf_counter()
-            logger.info("Sending initial request to model: model=%s", "gpt-4.1-mini")
-            response = await client.responses.create(
-                model="gpt-4.1-mini",
-                input=f"{skill.instructions}\n\nUser request: {user_question}",
-                tools=tools,
-            )
-            logger.info(
-                "Initial model request completed in %.2f seconds",
-                time.perf_counter() - model_call_started,
-            )
-            log_response(response, "Initial model")
-
-            tool_round = 0
+            conversation_response_id = None
+            supervisor = Supervisor()
+            print("Device support chat started. Type 'exit' or 'quit' to end.")
             while True:
-
-                tool_calls = [
-                    item
-                    for item in response.output
-                    if item.type == "function_call"
-                ]
-
-                if not tool_calls:
-                    logger.info("No further tool calls requested by the model")
+                user_question = input("\nYou: ").strip()
+                if user_question.lower() in {"exit", "quit"}:
+                    logger.info("User ended the chat session")
+                    print("Chat ended.")
                     break
+                if not user_question:
+                    print("Please enter a device question.")
+                    continue
 
-                tool_round += 1
-                logger.info(
-                    "Processing tool round %d with %d call(s)",
-                    tool_round,
-                    len(tool_calls),
-                )
-                tool_outputs = []
-                for tool_call in tool_calls:
-
-                    arguments = json.loads(tool_call.arguments)
+                logger.info("Received user request: %s", user_question)
+                skill = supervisor.select_skill(user_question)
+                if skill:
+                    resolution = await session.call_tool(
+                        "resolve_device_reference",
+                        arguments={"user_request": user_question},
+                    )
+                    logger.info("Supervisor device resolution result: %s", resolution.content)
+                    supervisor.record_tool_result(
+                        "resolve_device_reference",
+                        resolution.content,
+                    )
+                allowed_tools = [
+                    tool for tool in tools if skill and tool["name"] in skill.allowed_tools
+                ]
+                if skill:
                     logger.info(
-                        "Calling MCP tool: name=%s, call_id=%s, arguments=%s",
-                        tool_call.name,
-                        tool_call.call_id,
-                        json.dumps(arguments),
-                    )
-
-                    tool_call_started = time.perf_counter()
-                    result = await session.call_tool(
-                        tool_call.name,
-                        arguments=arguments,
+                        "Supervisor selected skill: name=%s, allowed_tools=%s",
+                        skill.name,
+                        sorted(skill.allowed_tools),
                     )
                     logger.info(
-                        "MCP tool completed in %.2f seconds: name=%s, result=%s",
-                        time.perf_counter() - tool_call_started,
-                        tool_call.name,
-                        result.content,
+                        "Exposing %d tools to the model: %s",
+                        len(allowed_tools),
+                        [tool["name"] for tool in allowed_tools],
                     )
-                    tool_outputs.append(
-                        {
-                            "type": "function_call_output",
-                            "call_id": tool_call.call_id,
-                            "output": str(result.content),
-                        }
-                    )
+                else:
+                    logger.info("Supervisor selected no skill; no MCP tools exposed")
 
                 model_call_started = time.perf_counter()
-                logger.info("Sending %d tool result(s) back to model", len(tool_outputs))
+                logger.info("Sending user request to model: model=%s", "gpt-4.1-mini")
                 response = await client.responses.create(
                     model="gpt-4.1-mini",
-                    input=[*response.output, *tool_outputs],
-                    tools=tools,
+                    input=user_question,
+                    instructions=supervisor.build_instructions(skill),
+                    previous_response_id=conversation_response_id,
+                    tools=allowed_tools,
                 )
                 logger.info(
-                    "Follow-up model request completed in %.2f seconds",
+                    "Model request completed in %.2f seconds",
                     time.perf_counter() - model_call_started,
                 )
-                log_response(response, "Follow-up model")
+                log_response(response, "Model")
 
-            logger.info("Final response: %s", response.output_text)
-            print(response.output_text)
+                tool_round = 0
+                logger.info(f"Model response output: {response.output}")
+                while True:
+                    tool_calls = [
+                        item
+                        for item in response.output
+                        if item.type == "function_call"
+                    ]
+                    if not tool_calls:
+                        logger.info("No further tool calls requested by the model")
+                        break
+
+                    tool_round += 1
+                    logger.info(
+                        "Processing tool round %d with %d call(s)",
+                        tool_round,
+                        len(tool_calls),
+                    )
+                    tool_outputs = []
+                    for tool_call in tool_calls:
+                        arguments = json.loads(tool_call.arguments)
+                        logger.info(
+                            "Calling MCP tool: name=%s, call_id=%s, arguments=%s",
+                            tool_call.name,
+                            tool_call.call_id,
+                            json.dumps(arguments),
+                        )
+                        tool_call_started = time.perf_counter()
+                        result = await session.call_tool(
+                            tool_call.name,
+                            arguments=arguments,
+                        )
+                        logger.info(
+                            "MCP tool completed in %.2f seconds: name=%s, result=%s",
+                            time.perf_counter() - tool_call_started,
+                            tool_call.name,
+                            result.content,
+                        )
+                        supervisor.record_tool_result(tool_call.name, result.content)
+                        tool_outputs.append(
+                            {
+                                "type": "function_call_output",
+                                "call_id": tool_call.call_id,
+                                "output": str(result.content),
+                            }
+                        )
+
+                    model_call_started = time.perf_counter()
+                    logger.info("Sending %d tool result(s) back to model", len(tool_outputs))
+                    response = await client.responses.create(
+                        model="gpt-4.1-mini",
+                        input=tool_outputs,
+                        previous_response_id=response.id,
+                        tools=allowed_tools,
+                    )
+                    logger.info(
+                        "Follow-up model request completed in %.2f seconds",
+                        time.perf_counter() - model_call_started,
+                    )
+                    log_response(response, "Follow-up model")
+
+                conversation_response_id = response.id
+                logger.info("Final response: %s", response.output_text)
+                print(f"AI: {response.output_text}")
 
 
 if __name__ == "__main__":
