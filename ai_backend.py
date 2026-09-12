@@ -308,7 +308,7 @@ async def main():
                 model_call_started = time.perf_counter()
                 logger.info("Sending user request to model: model=%s", "gpt-4.1-mini")
                 response = await client.responses.create(
-                    model="gpt-4.1-mini",
+                    model="gpt-4o",
                     input=user_question,
                     instructions=supervisor.build_instructions(skill),
                     previous_response_id=conversation_response_id,
@@ -370,7 +370,7 @@ async def main():
                     model_call_started = time.perf_counter()
                     logger.info("Sending %d tool result(s) back to model", len(tool_outputs))
                     response = await client.responses.create(
-                        model="gpt-4.1-mini",
+                        model="gpt-4o",
                         input=tool_outputs,
                         previous_response_id=response.id,
                         tools=allowed_tools,

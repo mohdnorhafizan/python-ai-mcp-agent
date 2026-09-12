@@ -5,28 +5,37 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Device Support Chat</title>
   <style>
-    :root { color: #18222b; background: #eef2f0; font-family: Georgia, "Times New Roman", serif; }
+    :root { color: #15252d; background: #f4f6f2; font-family: "Trebuchet MS", "Segoe UI", sans-serif; --ink: #15252d; --muted: #64747a; --line: #d7e0dc; --teal: #087f73; --teal-dark: #075b55; --coral: #e26d4f; --paper: #fffefa; }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; background-image: linear-gradient(90deg, rgba(27, 103, 91, .05) 1px, transparent 1px), linear-gradient(rgba(27, 103, 91, .05) 1px, transparent 1px); background-size: 24px 24px; }
-    main { width: min(880px, calc(100% - 32px)); min-height: 100vh; margin: 0 auto; display: grid; grid-template-rows: auto 1fr auto; }
-    header { padding: 30px 4px 20px; display: flex; justify-content: space-between; align-items: center; gap: 16px; border-bottom: 2px solid #1b675b; }
-    h1 { margin: 0; font-size: 28px; letter-spacing: 0; }
-    .status { color: #276c49; font: 600 12px/1.2 Verdana, sans-serif; text-transform: uppercase; }
-    #messages { padding: 24px 0; display: flex; flex-direction: column; gap: 16px; overflow: auto; }
-    .message { max-width: 82%; padding: 14px 16px; border: 1px solid #b7c5bd; border-radius: 6px; white-space: pre-wrap; font-size: 17px; line-height: 1.45; }
-    .assistant { align-self: flex-start; background: #fffdf7; border-left: 4px solid #1b675b; }
-    .user { align-self: flex-end; background: #dcece6; border-right: 4px solid #c55a31; }
-    .progress { align-self: flex-start; color: #52645b; background: #edf5f0; border-left: 4px solid #8a9d91; font: 14px/1.4 Verdana, sans-serif; }
-    form { padding: 18px 0 30px; border-top: 1px solid #b7c5bd; display: grid; grid-template-columns: 1fr auto; gap: 10px; }
-    input { min-width: 0; padding: 13px; border: 1px solid #6f8178; border-radius: 4px; font: 16px Georgia, serif; }
-    button { padding: 0 18px; border: 0; border-radius: 4px; background: #1b675b; color: white; cursor: pointer; font: 600 14px Verdana, sans-serif; }
-    button:disabled { opacity: .6; cursor: wait; }
-    @media (max-width: 600px) { main { width: min(100% - 24px, 880px); } header { padding-top: 20px; } h1 { font-size: 23px; } .message { max-width: 92%; } form { grid-template-columns: 1fr; } button { min-height: 42px; } }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 85% 0%, #dceee8 0, transparent 28%), #f4f6f2; }
+    main { width: min(960px, calc(100% - 40px)); min-height: 100vh; margin: 0 auto; display: grid; grid-template-rows: auto 1fr auto; }
+    header { padding: 32px 0 24px; display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; border-bottom: 1px solid var(--line); }
+    .eyebrow { margin: 0 0 8px; color: var(--teal); font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+    h1 { margin: 0; color: var(--ink); font-family: Georgia, serif; font-size: clamp(27px, 4vw, 39px); font-weight: 700; letter-spacing: 0; line-height: 1.05; }
+    .status { display: inline-flex; align-items: center; gap: 8px; margin-top: 7px; padding: 8px 11px; border: 1px solid #b9ddd2; border-radius: 999px; color: var(--teal-dark); background: #e9f6f1; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+    .status::before { width: 7px; height: 7px; border-radius: 50%; background: #22a878; content: ""; box-shadow: 0 0 0 3px #ccebe0; }
+    #messages { padding: 30px 0; display: flex; flex-direction: column; gap: 13px; overflow: auto; }
+    .message { max-width: min(76%, 680px); padding: 15px 18px; border: 1px solid var(--line); border-radius: 14px; white-space: pre-wrap; font-size: 16px; line-height: 1.55; box-shadow: 0 5px 18px rgba(20, 54, 48, .04); animation: appear .25s ease-out; }
+    .assistant { align-self: flex-start; background: var(--paper); border-left: 4px solid var(--teal); }
+    .user { align-self: flex-end; background: #dff1eb; border-right: 4px solid var(--coral); }
+    .progress { align-self: flex-start; display: flex; align-items: center; gap: 11px; color: #58706b; background: transparent; border: 0; box-shadow: none; padding: 3px 0; font-size: 13px; }
+    .progress::before { width: 8px; height: 8px; border: 2px solid #9ab9b0; border-top-color: var(--teal); border-radius: 50%; content: ""; animation: spin .8s linear infinite; }
+    .progress.complete { color: #3f6559; }
+    .progress.complete::before { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #22a878; content: "✓"; color: white; font: 700 10px/14px Arial, sans-serif; text-align: center; animation: none; }
+    form { padding: 17px; margin-bottom: 26px; border: 1px solid #cbd9d4; border-radius: 16px; background: rgba(255, 255, 255, .75); display: grid; grid-template-columns: 1fr auto; gap: 12px; box-shadow: 0 10px 30px rgba(30, 70, 62, .08); }
+    input { min-width: 0; padding: 13px 15px; border: 1px solid #cbd8d3; border-radius: 10px; outline: 0; color: var(--ink); background: #fff; font: 16px "Trebuchet MS", sans-serif; transition: border-color .2s, box-shadow .2s; }
+    input:focus { border-color: var(--teal); box-shadow: 0 0 0 3px #ccebe3; }
+    button { min-width: 92px; border: 0; border-radius: 10px; background: var(--teal); color: white; cursor: pointer; font: 700 14px "Trebuchet MS", sans-serif; transition: background .2s, transform .2s; }
+    button:hover { background: var(--teal-dark); transform: translateY(-1px); }
+    button:disabled { opacity: .6; cursor: wait; transform: none; }
+    @keyframes appear { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (max-width: 600px) { main { width: min(100% - 24px, 960px); } header { padding-top: 23px; } .status { padding: 7px 9px; } .message { max-width: 92%; } form { grid-template-columns: 1fr; padding: 12px; } button { min-height: 44px; } }
   </style>
 </head>
 <body>
   <main>
-    <header><h1>Device Support Chat</h1><span class="status">MCP connected</span></header>
+    <header><div><p class="eyebrow">ACS operations desk</p><h1>Device Support Chat</h1></div><span class="status">MCP connected</span></header>
     <section id="messages" aria-live="polite">
       <div class="message assistant">Ask about device history, provisioning, or diagnostics.</div>
     </section>
@@ -37,6 +46,7 @@
     const input = document.querySelector('#message');
     const send = document.querySelector('#send');
     const messages = document.querySelector('#messages');
+    let activeProgress;
     function addMessage(text, type) {
       const message = document.createElement('div');
       message.className = `message ${type}`;
@@ -44,6 +54,12 @@
       messages.append(message);
       messages.scrollTop = messages.scrollHeight;
       return message;
+    }
+    function finishProgress() {
+      if (activeProgress) {
+        activeProgress.classList.add('complete');
+        activeProgress = null;
+      }
     }
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -53,6 +69,7 @@
       input.value = '';
       input.disabled = true;
       send.disabled = true;
+      activeProgress = null;
       try {
         const reply = await fetch('/api/chat/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text }) });
         if (!reply.ok) throw new Error('The chat request failed.');
@@ -65,10 +82,13 @@
           if (!dataLine) return;
           const data = JSON.parse(dataLine);
           if (eventName === 'progress') {
-            addMessage(data.message, 'progress');
+            finishProgress();
+            activeProgress = addMessage(data.message, 'progress');
           } else if (eventName === 'answer') {
+            finishProgress();
             addMessage(data.answer, 'assistant');
           } else if (eventName === 'error') {
+            finishProgress();
             addMessage(`Error: ${data.message}`, 'assistant');
           }
         };
@@ -83,7 +103,10 @@
           buffer = events.pop();
           for (const event of events) handleEvent(event);
         }
-      } catch { addMessage('Error: Could not connect to the chat service.', 'assistant'); }
+      } catch {
+        finishProgress();
+        addMessage('Error: Could not connect to the chat service.', 'assistant');
+      }
       input.disabled = false;
       send.disabled = false;
       input.focus();
