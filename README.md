@@ -30,6 +30,23 @@ MCP server
 
 The backend owns the skill registry. A skill supplies instructions and a tool allowlist, so the model operates inside the selected workflow boundary.
 
+## Supervisor Graph
+
+The supervisor is represented as graph nodes and conditional edges in `ai_backend.py`. It makes the workflow explicit while keeping the implementation lightweight.
+
+```mermaid
+flowchart TD
+       receive[Receive message] --> select[Select skill]
+       select -->|No active skill| out[Out-of-scope reply]
+       select -->|Active skill| resolve[Resolve device]
+       resolve -->|Device missing| ask[Ask for serial number]
+       resolve -->|Device resolved| execute[Execute skill tools]
+       execute --> reply[Return answer]
+       ask --> receive
+```
+
+An active skill can be a newly selected intent or a pending workflow from an earlier message. That edge lets a serial-only reply such as `halalfood` complete an earlier performance request.
+
 ## Predefined Skills
 
 | Skill | Selected for | Permitted tools |
@@ -55,6 +72,23 @@ AI: [retrieves and summarizes halalfood performance metrics]
 ```
 
 When a user supplies a serial-only reply, the supervisor reuses the pending skill, resolves the serial through the device inventory, and completes the requested operation. A new explicit request replaces the pending workflow.
+
+## LangGraph Workflow
+
+The FastAPI application runs each message through an executable LangGraph state graph in [workflow.py](workflow.py):
+
+```mermaid
+flowchart TD
+       A[Select skill] -->|No support intent| B[Out of scope reply]
+       A -->|Support intent or pending skill| C[Resolve device]
+       C -->|Serial unavailable| D[Ask for device serial]
+       C -->|Serial resolved| E[Execute skill tools]
+       B --> F[End]
+       D --> F
+       E --> F
+```
+
+The `execute_skill` node filters MCP tools against the selected skill's allowlist before calling the model.
 
 ## Prerequisites
 

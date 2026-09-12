@@ -6,6 +6,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass
+from enum import Enum
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -35,14 +36,48 @@ class Skill:
     allowed_tools: frozenset[str]
 
 
+class WorkflowState(str, Enum):
+    IDLE = "idle"
+    AWAITING_DEVICE = "awaiting_device"
+    EXECUTING = "executing"
+
+
+class WorkflowNode(str, Enum):
+    RECEIVE_MESSAGE = "receive_message"
+    SELECT_SKILL = "select_skill"
+    RESOLVE_DEVICE = "resolve_device"
+    EXECUTE_SKILL = "execute_skill"
+    RESPOND = "respond"
+    OUT_OF_SCOPE = "out_of_scope"
+
+
+@dataclass(frozen=True)
+class WorkflowEdge:
+    source: WorkflowNode
+    target: WorkflowNode
+    condition: str
+
+
+WORKFLOW_EDGES = (
+    WorkflowEdge(WorkflowNode.RECEIVE_MESSAGE, WorkflowNode.SELECT_SKILL, "always"),
+    WorkflowEdge(WorkflowNode.SELECT_SKILL, WorkflowNode.OUT_OF_SCOPE, "no active skill"),
+    WorkflowEdge(WorkflowNode.SELECT_SKILL, WorkflowNode.RESOLVE_DEVICE, "active skill"),
+    WorkflowEdge(WorkflowNode.RESOLVE_DEVICE, WorkflowNode.RESPOND, "device is missing"),
+    WorkflowEdge(WorkflowNode.RESOLVE_DEVICE, WorkflowNode.EXECUTE_SKILL, "device is resolved"),
+    WorkflowEdge(WorkflowNode.EXECUTE_SKILL, WorkflowNode.RESPOND, "tool workflow completed"),
+)
+
+
 @dataclass
 class Supervisor:
     """Coordinates skill selection and session context for a conversation."""
 
     current_device_serial: str | None = None
     pending_skill: Skill | None = None
+    state: WorkflowState = WorkflowState.IDLE
 
     def select_skill(self, user_request: str) -> Skill | None:
+        logger.info("Supervisor node=%s", WorkflowNode.SELECT_SKILL.value)
         normalized_request = user_request.lower()
 
         if re.search(r"\b(provision|provisioning|activate|activation)\b", normalized_request):
@@ -51,6 +86,18 @@ class Supervisor:
             self.pending_skill = SKILLS["historical_reply"]
         elif re.search(r"\b(slow|offline|error|issue|problem|diagnose|diagnostic)\b", normalized_request):
             self.pending_skill = SKILLS["diagnostic"]
+
+        if self.pending_skill:
+            self.state = (
+                WorkflowState.EXECUTING
+                if self.current_device_serial
+                else WorkflowState.AWAITING_DEVICE
+            )
+            logger.info(
+                "Supervisor workflow state=%s, skill=%s",
+                self.state.value,
+                self.pending_skill.name,
+            )
 
         return self.pending_skill
 
@@ -71,7 +118,7 @@ class Supervisor:
         pending_context = (
             "This workflow is awaiting a device serial number from an earlier "
             "request. Treat a short follow-up message as the device reference."
-            if self.current_device_serial is None
+            if self.state is WorkflowState.AWAITING_DEVICE
             else "The required device reference has been resolved."
         )
         return (
@@ -79,9 +126,17 @@ class Supervisor:
             f"{device_context} {pending_context}"
         )
 
+    def out_of_scope_reply(self) -> str:
+        logger.info("Supervisor node=%s", WorkflowNode.OUT_OF_SCOPE.value)
+        return (
+            "I can help with device performance history, provisioning status, "
+            "and device diagnostics. Please ask a device-support question."
+        )
+
     def record_tool_result(self, tool_name: str, result_content: object) -> None:
         if tool_name in {"get_device_metrics", "check_provisioning_status"}:
             self.pending_skill = None
+            self.state = WorkflowState.IDLE
             logger.info("Supervisor completed the active workflow")
             return
 
@@ -92,9 +147,11 @@ class Supervisor:
         serial_match = re.search(r"['\"]serial_number['\"]:\s*['\"]([^'\"]+)", result_text)
         if serial_match:
             self.current_device_serial = serial_match.group(1)
+            self.state = WorkflowState.EXECUTING
             logger.info(
-                "Supervisor saved current device serial: %s",
+                "Supervisor saved current device serial: %s; workflow state=%s",
                 self.current_device_serial,
+                self.state.value,
             )
 
 
@@ -219,6 +276,11 @@ async def main():
 
                 logger.info("Received user request: %s", user_question)
                 skill = supervisor.select_skill(user_question)
+                if skill is None:
+                    logger.info("Supervisor selected no skill; returning scoped reply")
+                    print(f"AI: {supervisor.out_of_scope_reply()}")
+                    continue
+
                 if skill:
                     resolution = await session.call_tool(
                         "resolve_device_reference",
@@ -243,9 +305,6 @@ async def main():
                         len(allowed_tools),
                         [tool["name"] for tool in allowed_tools],
                     )
-                else:
-                    logger.info("Supervisor selected no skill; no MCP tools exposed")
-
                 model_call_started = time.perf_counter()
                 logger.info("Sending user request to model: model=%s", "gpt-4.1-mini")
                 response = await client.responses.create(

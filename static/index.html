@@ -16,6 +16,7 @@
     .message { max-width: 82%; padding: 14px 16px; border: 1px solid #b7c5bd; border-radius: 6px; white-space: pre-wrap; font-size: 17px; line-height: 1.45; }
     .assistant { align-self: flex-start; background: #fffdf7; border-left: 4px solid #1b675b; }
     .user { align-self: flex-end; background: #dcece6; border-right: 4px solid #c55a31; }
+    .progress { align-self: flex-start; color: #52645b; background: #edf5f0; border-left: 4px solid #8a9d91; font: 14px/1.4 Verdana, sans-serif; }
     form { padding: 18px 0 30px; border-top: 1px solid #b7c5bd; display: grid; grid-template-columns: 1fr auto; gap: 10px; }
     input { min-width: 0; padding: 13px; border: 1px solid #6f8178; border-radius: 4px; font: 16px Georgia, serif; }
     button { padding: 0 18px; border: 0; border-radius: 4px; background: #1b675b; color: white; cursor: pointer; font: 600 14px Verdana, sans-serif; }
@@ -42,6 +43,7 @@
       message.textContent = text;
       messages.append(message);
       messages.scrollTop = messages.scrollHeight;
+      return message;
     }
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -52,9 +54,35 @@
       input.disabled = true;
       send.disabled = true;
       try {
-        const reply = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text }) });
-        const data = await reply.json();
-        addMessage(reply.ok ? data.answer : `Error: ${data.detail || 'Unable to get an answer.'}`, 'assistant');
+        const reply = await fetch('/api/chat/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text }) });
+        if (!reply.ok) throw new Error('The chat request failed.');
+        const reader = reply.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        const handleEvent = (event) => {
+          const eventName = event.match(/^event: (.+)$/m)?.[1];
+          const dataLine = event.match(/^data: (.+)$/m)?.[1];
+          if (!dataLine) return;
+          const data = JSON.parse(dataLine);
+          if (eventName === 'progress') {
+            addMessage(data.message, 'progress');
+          } else if (eventName === 'answer') {
+            addMessage(data.answer, 'assistant');
+          } else if (eventName === 'error') {
+            addMessage(`Error: ${data.message}`, 'assistant');
+          }
+        };
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            if (buffer.trim()) handleEvent(buffer);
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop();
+          for (const event of events) handleEvent(event);
+        }
       } catch { addMessage('Error: Could not connect to the chat service.', 'assistant'); }
       input.disabled = false;
       send.disabled = false;
