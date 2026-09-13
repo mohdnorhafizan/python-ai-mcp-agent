@@ -1,30 +1,14 @@
 import json
 import logging
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal
 
 from langgraph.graph import END, START, StateGraph
 
-from ai_backend import Skill, Supervisor, client, log_response
+from ai_backend import client, log_response
+from models import ChatState
 
 logger = logging.getLogger("workflow")
 MODEL = "gpt-4.1-mini"
-
-
-class ChatState(TypedDict, total=False):
-    user_message: str
-    supervisor: Supervisor
-    previous_response_id: str | None
-    mcp_session: Any
-    skill: Skill | None
-    allowed_tools: list[dict[str, Any]]
-    response_id: str
-    answer: str
-    progress: Any
-    provisioning_status: str
-    provisioning_validation: str
-    provisioning_action: str
-    provisioning_verification: str
-
 
 async def emit_progress(state: ChatState, message: str) -> None:
     progress = state.get("progress")

@@ -3,7 +3,7 @@ import json
 import logging
 import sys
 import os
-from dataclasses import dataclass, field
+from models import ChatSession, ChatReply, ChatRequest
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,7 +13,6 @@ from fastapi.staticfiles import StaticFiles
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from openai import APIError
-from pydantic import BaseModel, Field
 
 from ai_backend import Supervisor
 from workflow import chat_workflow
@@ -26,22 +25,6 @@ logging.basicConfig(
 logger = logging.getLogger("web_app")
 STATIC_DIR = Path(__file__).parent / "static"
 MODEL = "gpt-4.1-mini"
-
-
-@dataclass
-class ChatSession:
-    supervisor: Supervisor = field(default_factory=Supervisor)
-    previous_response_id: str | None = None
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-
-
-class ChatRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=4_000)
-
-
-class ChatReply(BaseModel):
-    answer: str
-    skill: str | None
 
 
 sessions: dict[str, ChatSession] = {}
