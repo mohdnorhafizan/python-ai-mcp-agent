@@ -51,9 +51,10 @@ An active skill can be a newly selected intent or a pending workflow from an ear
 
 | Skill | Selected for | Permitted tools |
 | --- | --- | --- |
-| `historical_reply` | Requests containing `history`, `historical`, `metric`, `metrics`, or `performance` | `get_device`, `get_device_metrics` |
-| `device_provisioning` | Requests containing `provision`, `provisioning`, `activate`, or `activation` | `get_device`, `check_provisioning_status` |
-| `diagnostic` | Requests containing `slow`, `offline`, `error`, `issue`, `problem`, `diagnose`, or `diagnostic` | `get_device`, `get_device_metrics` |
+| `historical_reply` | Requests for past metrics or performance history | `get_device`, `get_device_metrics` |
+| `check_provisioning_status` | Viewing or inspecting if a device is provisioned/online | `get_device`, `check_provisioning_status` |
+| `execute_provisioning` | Command to provision, re-activate, or configure a device | `get_device`, `check_provisioning_status`, `validate_activation`, `execute_provisioning`, `verify_provisioning` |
+| `diagnostic` | Troubleshooting slow performance, errors, or issues | `get_device`, `get_device_metrics` |
 
 Greetings and unclear messages, such as `Hi`, do not select a skill or expose MCP tools.
 

@@ -67,7 +67,7 @@ WORKFLOW_EDGES = (
 
 
 class IntentClassification(BaseModel):
-    intent: Literal["device_provisioning", "historical_reply", "diagnostic", "none"]
+    intent: Literal["check_provisioning_status", "execute_provisioning", "historical_reply", "diagnostic", "none"]
     reasoning: str = Field(description="Brief explanation for the classification decision")
 
 
@@ -85,7 +85,8 @@ class Supervisor:
         system_prompt = (
             "You are an intent classification supervisor for an ACS device support system.\n"
             "Classify the user's message into exactly one of these skills:\n"
-            "- 'device_provisioning': Requests about device activation, configuration, provisioning status, or setup.\n"
+            "- 'check_provisioning_status': User wants to VIEW or CHECK if a device is provisioned, activated, or online without making changes.\n"
+            "- 'execute_provisioning': User explicitly COMMANDS or REQUESTS to provision, re-activate, configure, or setup a device.\n"
             "- 'historical_reply': Requests for past device performance, metrics, latency history, or usage trends over time.\n"
             "- 'diagnostic': Requests troubleshooting slow performance, errors, offline devices, or technical issues.\n"
             "- 'none': Greetings (e.g., 'hi', 'hello'), general chit-chat, personal questions, or anything unrelated to device support.\n\n"
@@ -112,8 +113,10 @@ class Supervisor:
         except Exception as error:
             logger.warning("LLM intent classification failed: %s; falling back to regex", error)
             normalized_request = user_request.lower()
-            if re.search(r"\b(provision|provisioning|activate|activation)\b", normalized_request):
-                intent = "device_provisioning"
+            if re.search(r"\b(check|view|status|is)\b.*\b(provision|provisioned|provisioning)\b", normalized_request):
+                intent = "check_provisioning_status"
+            elif re.search(r"\b(provision|provisioning|activate|activation)\b", normalized_request):
+                intent = "execute_provisioning"
             elif re.search(r"\b(history|historical|metric|metrics|performance)\b", normalized_request):
                 intent = "historical_reply"
             elif re.search(r"\b(slow|offline|error|issue|problem|diagnose|diagnostic)\b", normalized_request):
@@ -236,16 +239,33 @@ SKILLS = {
             {"get_device", "get_device_metrics"}
         ),
     ),
-    "device_provisioning": Skill(
-        name="device_provisioning",
+    "check_provisioning_status": Skill(
+        name="check_provisioning_status",
         instructions=(
-            "You are the Device Provisioning workflow. The supervisor has already "
+            "You are the Check Provisioning Status workflow. The supervisor has already "
             "resolved any device reference and supplied it in the session context. "
             "If no device serial is in session context, ask only for the serial number. "
             "Otherwise, call check_provisioning_status with the resolved serial number "
             "and report the outcome. Tool calls are internal: do not tell the user "
-            "to wait or that you will check later. Do not "
-            "provide historical metric analysis."
+            "to wait or that you will check later. Do not perform mutating actions "
+            "or historical metric analysis."
+        ),
+        allowed_tools=frozenset(
+            {
+                "get_device",
+                "check_provisioning_status",
+            }
+        ),
+    ),
+    "execute_provisioning": Skill(
+        name="execute_provisioning",
+        instructions=(
+            "You are the Execute Provisioning workflow. The supervisor has already "
+            "resolved any device reference and supplied it in the session context. "
+            "If no device serial is in session context, ask only for the serial number. "
+            "Otherwise, validate activation, execute provisioning action, and verify result. "
+            "Tool calls are internal: do not tell the user to wait or that you will check later. "
+            "Do not provide historical metric analysis."
         ),
         allowed_tools=frozenset(
             {

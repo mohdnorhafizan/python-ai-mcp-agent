@@ -83,6 +83,9 @@ def result_flag(result: str, name: str, value: bool) -> bool:
 def route_after_provisioning_status(
     state: ChatState,
 ) -> Literal["provisioning_outcome", "validate_activation"]:
+    skill = state.get("skill") or state["supervisor"].pending_skill
+    if skill and skill.name == "check_provisioning_status":
+        return "provisioning_outcome"
     if result_flag(state.get("provisioning_status", ""), "provisioned", True):
         return "provisioning_outcome"
     return "validate_activation"
@@ -243,7 +246,7 @@ def build_workflow():
         lambda state: (
             "provisioning_status"
             if state.get("skill", None)
-            and state["skill"].name == "device_provisioning"
+            and state["skill"].name in {"check_provisioning_status", "execute_provisioning"}
             and state["supervisor"].current_device_serial
             else route_after_resolution(state)
         ),
