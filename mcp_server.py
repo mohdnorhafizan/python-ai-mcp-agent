@@ -6,13 +6,13 @@ DEVICES = {
     "abc123": {
         "serial_number": "ABC123",
         "model": "Router X",
-        "status": "offline",
-        "provisioned": True,
+        "status": "online",
+        "provisioned": False,
     },
     "halalfood": {
         "serial_number": "halalfood",
         "model": "Router Y",
-        "status": "offline",
+        "status": "online",
         "provisioned": False,
     },
 }

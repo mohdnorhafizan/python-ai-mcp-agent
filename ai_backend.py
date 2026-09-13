@@ -7,9 +7,11 @@ import sys
 import time
 from dataclasses import dataclass
 from enum import Enum
+from typing import Literal
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
+from pydantic import BaseModel, Field
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -64,6 +66,11 @@ WORKFLOW_EDGES = (
 )
 
 
+class IntentClassification(BaseModel):
+    intent: Literal["device_provisioning", "historical_reply", "diagnostic", "none"]
+    reasoning: str = Field(description="Brief explanation for the classification decision")
+
+
 @dataclass
 class Supervisor:
     """Coordinates skill selection and session context for a conversation."""
@@ -72,17 +79,54 @@ class Supervisor:
     pending_skill: Skill | None = None
     state: WorkflowState = WorkflowState.IDLE
 
-    def select_skill(self, user_request: str) -> Skill | None:
+    async def select_skill(self, user_request: str) -> Skill | None:
         logger.info("Supervisor node=%s", WorkflowNode.SELECT_SKILL.value)
-        normalized_request = user_request.lower()
 
-        if re.search(r"\b(provision|provisioning|activate|activation)\b", normalized_request):
-            self.pending_skill = SKILLS["device_provisioning"]
-        elif re.search(r"\b(history|historical|metric|metrics|performance)\b", normalized_request):
-            self.pending_skill = SKILLS["historical_reply"]
-        elif re.search(r"\b(slow|offline|error|issue|problem|diagnose|diagnostic)\b", normalized_request):
-            self.pending_skill = SKILLS["diagnostic"]
+        system_prompt = (
+            "You are an intent classification supervisor for an ACS device support system.\n"
+            "Classify the user's message into exactly one of these skills:\n"
+            "- 'device_provisioning': Requests about device activation, configuration, provisioning status, or setup.\n"
+            "- 'historical_reply': Requests for past device performance, metrics, latency history, or usage trends over time.\n"
+            "- 'diagnostic': Requests troubleshooting slow performance, errors, offline devices, or technical issues.\n"
+            "- 'none': Greetings (e.g., 'hi', 'hello'), general chit-chat, personal questions, or anything unrelated to device support.\n\n"
+            f"Current Session Context:\n"
+            f"- Active Pending Workflow: {self.pending_skill.name if self.pending_skill else 'None'}\n"
+            f"- Active Device Serial: {self.current_device_serial or 'None'}\n\n"
+            "Note: If there is an active pending workflow and the user provides a follow-up answer "
+            "(such as a device serial number like 'halalfood' or 'ABC123'), classify it under that active pending workflow skill."
+        )
 
+        try:
+            response = await client.beta.chat.completions.parse(
+                model="gpt-4.1-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_request},
+                ],
+                response_format=IntentClassification,
+            )
+            parsed = response.choices[0].message.parsed
+            intent = parsed.intent if parsed else "none"
+            reasoning = parsed.reasoning if parsed else ""
+            logger.info("LLM Intent Classification: intent=%s, reasoning='%s'", intent, reasoning)
+        except Exception as error:
+            logger.warning("LLM intent classification failed: %s; falling back to regex", error)
+            normalized_request = user_request.lower()
+            if re.search(r"\b(provision|provisioning|activate|activation)\b", normalized_request):
+                intent = "device_provisioning"
+            elif re.search(r"\b(history|historical|metric|metrics|performance)\b", normalized_request):
+                intent = "historical_reply"
+            elif re.search(r"\b(slow|offline|error|issue|problem|diagnose|diagnostic)\b", normalized_request):
+                intent = "diagnostic"
+            else:
+                intent = self.pending_skill.name if self.pending_skill else "none"
+
+        if intent == "none":
+            self.pending_skill = None
+            self.state = WorkflowState.IDLE
+            return None
+
+        self.pending_skill = SKILLS.get(intent)
         if self.pending_skill:
             self.state = (
                 WorkflowState.EXECUTING
@@ -303,7 +347,7 @@ async def main():
 
                 logger.info("Received user request: %s", user_question)
 
-                skill = supervisor.select_skill(user_question)
+                skill = await supervisor.select_skill(user_question)
                 if skill is None:
                     logger.info("Supervisor selected no skill; returning scoped reply")
                     print(f"AI: {supervisor.out_of_scope_reply()}")

@@ -19,7 +19,7 @@ async def emit_progress(state: ChatState, message: str) -> None:
 async def select_skill(state: ChatState) -> dict[str, Any]:
     await emit_progress(state, "Selecting the appropriate device-support workflow")
     supervisor = state["supervisor"]
-    skill = supervisor.select_skill(state["user_message"])
+    skill = await supervisor.select_skill(state["user_message"])
     # A short follow-up such as a serial number has no intent keywords. In
     # that case, continue the workflow remembered by the supervisor.
     if skill is None:
@@ -63,6 +63,9 @@ async def provisioning_status(state: ChatState) -> dict[str, Any]:
         "check_provisioning_status",
         arguments={"serial_number": state["supervisor"].current_device_serial},
     )
+
+    logger.info("Provisioning status result=%s", result.content)
+
     state["supervisor"].record_tool_result(
         "check_provisioning_status", result.content
     )
@@ -71,6 +74,9 @@ async def provisioning_status(state: ChatState) -> dict[str, Any]:
 
 def result_flag(result: str, name: str, value: bool) -> bool:
     normalized = result.lower().replace('"', "'")
+
+    logger.info("Result flag check: result=%s, name=%s, value=%s", result, name, value)
+
     return f"'{name}': {str(value).lower()}" in normalized
 
 
@@ -129,18 +135,23 @@ async def verify_provisioning(state: ChatState) -> dict[str, Any]:
 
 async def provisioning_outcome(state: ChatState) -> dict[str, Any]:
     await emit_progress(state, "Step 8: preparing final provisioning outcome")
-    details = (
-        state.get("provisioning_verification")
-        or state.get("provisioning_action")
-        or state.get("provisioning_status", "")
-    )
+    # details = (
+    #     state.get("provisioning_verification")
+    #     or state.get("provisioning_action")
+    #     or state.get("provisioning_status", "")
+    # )
+
+    details = (state.get("provisioning_status"))
+
+    logger.info("Provisioning outcome details: %s", details)
+
     serial_number = state["supervisor"].current_device_serial
     if result_flag(details, "provisioned", True) or result_flag(details, "success", True):
         answer = f"Device {serial_number} is provisioned successfully."
     elif result_flag(state.get("provisioning_validation", ""), "eligible", False):
         answer = f"Device {serial_number} is not eligible for provisioning because it is offline."
     else:
-        answer = f"Device {serial_number} could not be confirmed as provisioned."
+        answer = f"Device {serial_number} provisioning failed."
     await emit_progress(state, "Provisioning workflow completed")
     return {"answer": answer}
 

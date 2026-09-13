@@ -14,7 +14,6 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from openai import APIError
 
-from ai_backend import Supervisor
 from workflow import chat_workflow
 
 logging.basicConfig(
