@@ -16,11 +16,7 @@ from mcp.client.stdio import stdio_client
 
 load_dotenv()
 
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-)
-logger = logging.getLogger("ai_backend")
+logger = logging.getLogger("web_app")
 
 client = AsyncOpenAI(
     api_key=os.getenv("OPENAI_API_KEY")
@@ -143,16 +139,41 @@ class Supervisor:
         if tool_name != "resolve_device_reference":
             return
 
-        result_text = str(result_content)
-        serial_match = re.search(r"['\"]serial_number['\"]:\s*['\"]([^'\"]+)", result_text)
-        if serial_match:
-            self.current_device_serial = serial_match.group(1)
+        payload = extract_tool_payload(result_content)
+        serial_number = payload.get("serial_number")
+        if payload.get("found") and serial_number:
+            self.current_device_serial = str(serial_number)
             self.state = WorkflowState.EXECUTING
             logger.info(
                 "Supervisor saved current device serial: %s; workflow state=%s",
                 self.current_device_serial,
                 self.state.value,
             )
+
+
+def extract_tool_payload(result_content: object) -> dict[str, object]:
+    """Extract a JSON object from MCP text content or a direct dictionary."""
+
+    if isinstance(result_content, dict):
+        return result_content
+
+    if isinstance(result_content, list):
+        for item in result_content:
+            text = item.get("text") if isinstance(item, dict) else getattr(item, "text", None)
+            if text:
+                payload = extract_tool_payload(text)
+                if payload:
+                    return payload
+        return {}
+
+    if isinstance(result_content, str):
+        try:
+            payload = json.loads(result_content)
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    return {}
 
 
 SKILLS = {
@@ -183,7 +204,13 @@ SKILLS = {
             "provide historical metric analysis."
         ),
         allowed_tools=frozenset(
-            {"get_device", "check_provisioning_status"}
+            {
+                "get_device",
+                "check_provisioning_status",
+                "validate_activation",
+                "execute_provisioning",
+                "verify_provisioning",
+            }
         ),
     ),
     "diagnostic": Skill(
@@ -275,6 +302,7 @@ async def main():
                     continue
 
                 logger.info("Received user request: %s", user_question)
+
                 skill = supervisor.select_skill(user_question)
                 if skill is None:
                     logger.info("Supervisor selected no skill; returning scoped reply")

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import sys
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
@@ -16,6 +17,11 @@ from pydantic import BaseModel, Field
 
 from ai_backend import Supervisor
 from workflow import chat_workflow
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+)
 
 logger = logging.getLogger("web_app")
 STATIC_DIR = Path(__file__).parent / "static"
@@ -102,6 +108,13 @@ async def stream_agent(session_state: ChatSession, user_message: str):
                 async with ClientSession(read, write) as mcp_session:
                     await mcp_session.initialize()
                     tools_result = await mcp_session.list_tools()
+
+                    logger.info(
+                        "MCP server returned %d tools: %s",
+                        len(tools_result.tools),
+                        [tool.name for tool in tools_result.tools],
+                    )
+                    
                     all_tools = [
                         {
                             "type": "function",

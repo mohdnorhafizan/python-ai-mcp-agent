@@ -20,6 +20,10 @@ class ChatState(TypedDict, total=False):
     response_id: str
     answer: str
     progress: Any
+    provisioning_status: str
+    provisioning_validation: str
+    provisioning_action: str
+    provisioning_verification: str
 
 
 async def emit_progress(state: ChatState, message: str) -> None:
@@ -45,6 +49,9 @@ async def select_skill(state: ChatState) -> dict[str, Any]:
 
 def route_after_skill(state: ChatState) -> Literal["resolve_device", "out_of_scope"]:
     supervisor = state["supervisor"]
+
+    logger.info(f"Debug State={state}")
+
     return "resolve_device" if state.get("skill") or supervisor.pending_skill else "out_of_scope"
 
 
@@ -64,6 +71,94 @@ async def resolve_device(state: ChatState) -> dict[str, Any]:
     )
     state["supervisor"].record_tool_result("resolve_device_reference", result.content)
     return {"skill": skill}
+
+
+async def provisioning_status(state: ChatState) -> dict[str, Any]:
+    await emit_progress(state, "Step 3: checking provisioning status")
+    result = await state["mcp_session"].call_tool(
+        "check_provisioning_status",
+        arguments={"serial_number": state["supervisor"].current_device_serial},
+    )
+    state["supervisor"].record_tool_result(
+        "check_provisioning_status", result.content
+    )
+    return {"provisioning_status": str(result.content)}
+
+
+def result_flag(result: str, name: str, value: bool) -> bool:
+    normalized = result.lower().replace('"', "'")
+    return f"'{name}': {str(value).lower()}" in normalized
+
+
+def route_after_provisioning_status(
+    state: ChatState,
+) -> Literal["provisioning_outcome", "validate_activation"]:
+    if result_flag(state.get("provisioning_status", ""), "provisioned", True):
+        return "provisioning_outcome"
+    return "validate_activation"
+
+
+async def validate_activation(state: ChatState) -> dict[str, Any]:
+    await emit_progress(state, "Step 4: validating activation and configuration")
+    result = await state["mcp_session"].call_tool(
+        "validate_activation",
+        arguments={"serial_number": state["supervisor"].current_device_serial},
+    )
+    return {"provisioning_validation": str(result.content)}
+
+
+def route_after_validation(
+    state: ChatState,
+) -> Literal["execute_provisioning", "provisioning_outcome"]:
+    if result_flag(state.get("provisioning_validation", ""), "eligible", True) and (
+        result_flag(
+            state.get("provisioning_validation", ""),
+            "configuration_valid",
+            True,
+        )
+    ):
+        return "execute_provisioning"
+    return "provisioning_outcome"
+
+
+async def execute_provisioning(state: ChatState) -> dict[str, Any]:
+    await emit_progress(state, "Step 6: executing provisioning action")
+    action = "provision"
+    result = await state["mcp_session"].call_tool(
+        "execute_provisioning",
+        arguments={
+            "serial_number": state["supervisor"].current_device_serial,
+            "action": action,
+        },
+    )
+    return {"provisioning_action": str(result.content)}
+
+
+async def verify_provisioning(state: ChatState) -> dict[str, Any]:
+    await emit_progress(state, "Step 7: verifying provisioning result")
+    result = await state["mcp_session"].call_tool(
+        "verify_provisioning",
+        arguments={"serial_number": state["supervisor"].current_device_serial},
+    )
+    return {"provisioning_verification": str(result.content)}
+
+
+async def provisioning_outcome(state: ChatState) -> dict[str, Any]:
+    await emit_progress(state, "Step 8: preparing final provisioning outcome")
+    details = (
+        state.get("provisioning_verification")
+        or state.get("provisioning_action")
+        or state.get("provisioning_status", "")
+    )
+    serial_number = state["supervisor"].current_device_serial
+    if result_flag(details, "provisioned", True) or result_flag(details, "success", True):
+        answer = f"Device {serial_number} is provisioned successfully."
+    elif result_flag(state.get("provisioning_validation", ""), "eligible", False):
+        answer = f"Device {serial_number} is not eligible for provisioning because it is offline."
+    else:
+        answer = f"Device {serial_number} could not be confirmed as provisioned."
+    await emit_progress(state, "Provisioning workflow completed")
+    return {"answer": answer}
 
 
 def route_after_resolution(state: ChatState) -> Literal["ask_for_device", "execute_skill"]:
@@ -140,13 +235,37 @@ def build_workflow():
     graph.add_node("out_of_scope", out_of_scope)
     graph.add_node("resolve_device", resolve_device)
     graph.add_node("ask_for_device", ask_for_device)
+    graph.add_node("provisioning_status", provisioning_status)
+    graph.add_node("validate_activation", validate_activation)
+    graph.add_node("execute_provisioning", execute_provisioning)
+    graph.add_node("verify_provisioning", verify_provisioning)
+    graph.add_node("provisioning_outcome", provisioning_outcome)
     graph.add_node("execute_skill", execute_skill)
     graph.add_edge(START, "select_skill")
     graph.add_conditional_edges("select_skill", route_after_skill)
-    graph.add_conditional_edges("resolve_device", route_after_resolution)
+    graph.add_conditional_edges(
+        "resolve_device",
+        lambda state: (
+            "provisioning_status"
+            if state.get("skill", None)
+            and state["skill"].name == "device_provisioning"
+            and state["supervisor"].current_device_serial
+            else route_after_resolution(state)
+        ),
+        {
+            "provisioning_status": "provisioning_status",
+            "ask_for_device": "ask_for_device",
+            "execute_skill": "execute_skill",
+        },
+    )
+    graph.add_conditional_edges("provisioning_status", route_after_provisioning_status)
+    graph.add_conditional_edges("validate_activation", route_after_validation)
+    graph.add_edge("execute_provisioning", "verify_provisioning")
+    graph.add_edge("verify_provisioning", "provisioning_outcome")
     graph.add_edge("out_of_scope", END)
     graph.add_edge("ask_for_device", END)
     graph.add_edge("execute_skill", END)
+    graph.add_edge("provisioning_outcome", END)
     return graph.compile()
 
 

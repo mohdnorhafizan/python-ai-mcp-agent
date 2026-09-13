@@ -6,14 +6,14 @@ DEVICES = {
     "abc123": {
         "serial_number": "ABC123",
         "model": "Router X",
-        "status": "online",
+        "status": "offline",
         "provisioned": True,
     },
     "halalfood": {
         "serial_number": "halalfood",
         "model": "Router Y",
-        "status": "online",
-        "provisioned": True,
+        "status": "offline",
+        "provisioned": False,
     },
 }
 
@@ -75,6 +75,54 @@ def check_provisioning_status(serial_number: str) -> dict:
     return {
         "serial_number": device["serial_number"],
         "provisioned": device["provisioned"],
+    }
+
+
+@mcp.tool()
+def validate_activation(serial_number: str) -> dict:
+    """Validate whether a registered device is eligible for provisioning."""
+
+    device = get_registered_device(serial_number)
+    return {
+        "serial_number": device["serial_number"],
+        "eligible": device["status"] != "offline",
+        "configuration_valid": True,
+    }
+
+
+@mcp.tool()
+def execute_provisioning(serial_number: str, action: str) -> dict:
+    """Execute an allowed mock provisioning action after policy validation."""
+
+    allowed_actions = {"provision", "reprovision", "configure"}
+    if action not in allowed_actions:
+        raise ValueError(f"Unsupported provisioning action: {action}")
+
+    device = get_registered_device(serial_number)
+    if device["status"] == "offline":
+        return {
+            "serial_number": device["serial_number"],
+            "success": False,
+            "message": "Device is offline; provisioning action was not executed.",
+        }
+
+    device["provisioned"] = True
+    return {
+        "serial_number": device["serial_number"],
+        "success": True,
+        "action": action,
+    }
+
+
+@mcp.tool()
+def verify_provisioning(serial_number: str) -> dict:
+    """Verify the final provisioning state of a registered device."""
+
+    device = get_registered_device(serial_number)
+    return {
+        "serial_number": device["serial_number"],
+        "provisioned": device["provisioned"],
+        "status": device["status"],
     }
 
 
