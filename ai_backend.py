@@ -233,7 +233,17 @@ SKILLS = {
             "Otherwise, call get_device_metrics with that serial number. When the request omits "
             "a duration, use 3 days. Tool calls are internal: do not tell the user "
             "to wait or that you will check later. Complete the tool workflow before "
-            "giving a concise factual summary. Do not perform provisioning actions."
+            "giving a concise factual summary.\n\n"
+            "### Evaluation Thresholds:\n"
+            "When analyzing the metrics, evaluate the performance based on these static thresholds:\n"
+            "- `latency`: High latency is any value above 20 ms.\n\n"
+            "Use these thresholds to determine if the device is operating normally or experiencing issues.\n"
+            "**Your task is to analyze the metrics against these thresholds and report if the performance is OK, degraded, or critical.**\n"
+            "**Required Output Format:**\n"
+            "1.  **Performance Status:** State the overall status (OK, Degraded, Critical).\n"
+            "2.  **Metrics:** Provide the raw metrics for the requested period.\n"
+            "3.  **Analysis:** Briefly explain why the performance is in that state.\n\n"
+            "**Final Instruction:** You must strictly adhere to the Required Output Format. Do not add any other text or summaries."
         ),
         allowed_tools=frozenset(
             {"get_device", "get_device_metrics"}
